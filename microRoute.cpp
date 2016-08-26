@@ -7,8 +7,8 @@ MicroRouteDetection::MicroRouteDetection(
     uint8_t bfSampling,
     uint8_t clusterMaxNum,
     uint8_t beamIdxMaxNum,
-    const std::multimap<uint8_t, RouteIndex>& bfSnrFwReport,
-    const std::map<RouteIndex, uint8_t>& bfTxRxSnrFwReport,
+    const std::multimap<uint8_t, RouteIndex>& bfSnrReport,
+    const std::map<RouteIndex, uint8_t>& bfTxRxSnrReport,
     const std::map<RouteIndex, uint8_t>& bfTxRxClusterIdxReport)
     : gridSize_(9),
       bfSampling_(bfSampling),
@@ -16,10 +16,10 @@ MicroRouteDetection::MicroRouteDetection(
       beamIdxMaxNum_(beamIdxMaxNum),
       bestRouteFromFWFlag_(false),
       bestRouteIndexFromFW_(-1,-1),
-      bfSnrReport_(bfSnrFwReport),
-      bfSnrReportMicroRoute_(bfSnrFwReport),
-      bfTxRxSnrReport_(bfTxRxSnrFwReport),
-      bfTxRxClusterIdxReport_(bfTxRxClusterIdxReport) {
+      bfSnrReport_(bfSnrReport),
+      bfSnrReportMicroRoute_(bfSnrReport),
+      bfTxRxSnrReport_(bfTxRxSnrReport),
+      bfTxRxClusterIdxReport_(bfTxRxClusterIdxReport) { 
   // build 3x3 grid to compare the <tx, rx> pairs with same Snr values
   RouteIndex RouteIndexTemp1(-bfSampling_, -bfSampling_);
   RouteIndex RouteIndexTemp2(-bfSampling_, 0);
@@ -102,15 +102,13 @@ MicroRouteDetection::initialClustering() {
     txRxSnrCluster.bfPeakTx = routeIndexSelectedPeak.tx_idx;
     txRxSnrCluster.bfPeakRx = routeIndexSelectedPeak.rx_idx;
     bfTxRxClusters_.push_back(txRxSnrCluster);
-    clusterIdx++;
+    ++clusterIdx;
   }
 }
 
 void
-MicroRouteDetection::bestMicroRouteFromFW(
-    bool microRouteFromFWFlag,
-    RouteIndex routeIndexFromFW) {
-  bestRouteFromFWFlag_ = microRouteFromFWFlag;
+MicroRouteDetection::bestMicroRouteFromFW(RouteIndex routeIndexFromFW) {
+  bestRouteFromFWFlag_ = true;
   bestRouteIndexFromFW_ = routeIndexFromFW;
 }
 
@@ -118,31 +116,32 @@ std::multimap<uint8_t, RouteIndex>&
 MicroRouteDetection::microRouteDiscovery() {
   // if equal peaks exist, maybe we shall consider equalPeakValue(maxSnr) using
   // compareEqualPeak(maxSnr)
-  uint8_t maxSnr = bfSnrReportMicroRoute.rbegin()->first;
-  for (multimap_rev_iterator rit = bfSnrReportMicroRoute.rbegin();
-      rit != bfSnrReportMicroRoute.rend(); ) {
+  uint8_t maxSnr = bfSnrReportMicroRoute_.rbegin()->first;
+  for (multimap_rev_iterator rit = bfSnrReportMicroRoute_.rbegin();
+      rit != bfSnrReportMicroRoute_.rend(); ) {
     uint8_t snrTemp = rit->first;
     RouteIndex routeIndexTemp(-1,-1);
-    if (!bestRouteFromFWFlag)
-      routeIndexTemp = rit->second;
-    else
-      routeIndexTemp = bestRouteIndexFromFW;
-
-    if (microRoute.empty()) {
-      microRoute.insert(
+    if (microRoute_.empty()) {
+      // when bestRouteFromFWFlag_ is true, 
+      // routeIndexTemp is loaded from bestRouteIndexFromFW_
+      if (!bestRouteFromFWFlag_)
+        routeIndexTemp = rit->second;
+      else
+        routeIndexTemp = bestRouteIndexFromFW_;
+      microRoute_.insert(
           std::make_pair<uint8_t, RouteIndex>(snrTemp, routeIndexTemp));
-      bfSnrReportMicroRoute.erase(--(rit.base()));
+      bfSnrReportMicroRoute_.erase(--(rit.base()));
     } else {
       if (validNewMicroRoute(routeIndexTemp, snrTemp, maxSnr)) {
-        microRoute.insert(
+        microRoute_.insert(
             std::make_pair<uint8_t, RouteIndex>(snrTemp, routeIndexTemp));
-        bfSnrReportMicroRoute.erase(--(rit.base()));
+        bfSnrReportMicroRoute_.erase(--(rit.base()));
       } else {
-        bfSnrReportMicroRoute.erase(--(rit.base()));
+        bfSnrReportMicroRoute_.erase(--(rit.base()));
       }
     }
   }
-  return microRoute;
+  return microRoute_;
 }
 
 bool
@@ -151,16 +150,16 @@ MicroRouteDetection::validNewMicroRoute(
     uint8_t Snr, uint8_t MaxSnr) {
   bool validFlag = false;
   uint8_t snrThreshold = 2;
-  for (multimap_iterator it = microRoute.begin(); it != microRoute.end();
+  for (multimap_iterator it = microRoute_.begin(); it != microRoute_.end();
       ++it) {
     // drop the <tx,rx> pair which lies
     // in the beamwidth of an identified micro-route
-    uint8_t txHalfBeamwidth = halfBeamWidth[it->second.tx_idx];
-    uint8_t rxHalfBeamwidth = halfBeamWidth[it->second.rx_idx];
-    uint8_t mappedTxIdxRef = beamIndexMapping[it->second.tx_idx];
-    uint8_t mappedRxIdxRef = beamIndexMapping[it->second.rx_idx];
-    uint8_t mappedTxIdx = beamIndexMapping[routeIndex.tx_idx];
-    uint8_t mappedRxIdx = beamIndexMapping[routeIndex.rx_idx];
+    uint8_t txHalfBeamwidth = halfBeamWidth_[it->second.tx_idx];
+    uint8_t rxHalfBeamwidth = halfBeamWidth_[it->second.rx_idx];
+    uint8_t mappedTxIdxRef = beamIndexMapping_[it->second.tx_idx];
+    uint8_t mappedRxIdxRef = beamIndexMapping_[it->second.rx_idx];
+    uint8_t mappedTxIdx = beamIndexMapping_[routeIndex.tx_idx];
+    uint8_t mappedRxIdx = beamIndexMapping_[routeIndex.rx_idx];
     uint8_t txSeperation = abs(mappedTxIdx - mappedTxIdxRef);
     uint8_t rxSeperation = abs(mappedRxIdx - mappedRxIdxRef);
     if ((txSeperation <= txHalfBeamwidth) &&
@@ -207,7 +206,7 @@ MicroRouteDetection::compareEqualPeak(uint8_t maxSnr) {
   uint8_t indexTemp = 0;
 
   for (multimap_iterator it = iterPair.first; it != iterPair.second;) {
-    if (bfTxRxClusterIdxReport.at(it->second) > 0) {
+    if (bfTxRxClusterIdxReport_.at(it->second) > 0) {
       bfTxRxSnrReport_.erase(it->second);
       bfSnrReport_.erase(it++);
     } else
@@ -267,16 +266,16 @@ MicroRouteDetection::clusterConstruction(
   uint8_t temp = 0;
   for (multimap_iterator it = bfSnrReport_.begin(); it != bfSnrReport_.end();
       ++it) {
-    uint8_t txHalfBeamwidth = halfBeamWidth[RouteIndexPeak.tx_idx];
-    uint8_t rxHalfBeamwidth = halfBeamWidth[RouteIndexPeak.rx_idx];
-    uint8_t mappedTxIdxPeak = beamIndexMapping[RouteIndexPeak.tx_idx];
-    uint8_t mappedRxIdxPeak = beamIndexMapping[RouteIndexPeak.rx_idx];
-    uint8_t mappedTxIdx = beamIndexMapping[it->second.tx_idx];
-    uint8_t mappedRxIdx = beamIndexMapping[it->second.rx_idx];
+    uint8_t txHalfBeamwidth = halfBeamWidth_[RouteIndexPeak.tx_idx];
+    uint8_t rxHalfBeamwidth = halfBeamWidth_[RouteIndexPeak.rx_idx];
+    uint8_t mappedTxIdxPeak = beamIndexMapping_[RouteIndexPeak.tx_idx];
+    uint8_t mappedRxIdxPeak = beamIndexMapping_[RouteIndexPeak.rx_idx];
+    uint8_t mappedTxIdx = beamIndexMapping_[it->second.tx_idx];
+    uint8_t mappedRxIdx = beamIndexMapping_[it->second.rx_idx];
 
     uint8_t txSeperation = abs(mappedTxIdxPeak - mappedTxIdx);
     uint8_t rxSeperation = abs(mappedRxIdxPeak - mappedRxIdx);
-    temp++;
+    ++temp;
     // check BeamWidth
     if ((txSeperation <= txHalfBeamwidth) &&
         (rxSeperation <= rxHalfBeamwidth)) {
@@ -305,7 +304,7 @@ MicroRouteDetection::eliminateEntryFromClusterReport() {
 
 void
 MicroRouteDetection::halfBeamWidthInitialCalculation() {
-  double cbResolution = 90 / (beamIdxMaxNum_+1);
+  double cbResolution = 90 / (beamIdxMaxNum_ + 1);
   uint16_t broadSideBeamWidth = 8;
   double pi = 3.1415;
   uint8_t bfIndex;

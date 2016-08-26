@@ -55,9 +55,10 @@ int main() {
   microRoute.initialClustering();
 
   std::multimap<uint8_t, RouteIndex> microRoutes;
-  RouteIndex bestMicroRouteFW(44,14);
+
+  RouteIndex bestMicroRouteFW(19,49);
   // For micro-route discovery, insert best micro-route beamforming pair from FW report
-  microRoute.bestMicroRouteFromFW(true,bestMicroRouteFW);
+  microRoute.bestMicroRouteFromFW(bestMicroRouteFW);
   microRoutes = microRoute.microRouteDiscovery();
 
   std::cout << "" << std::endl;

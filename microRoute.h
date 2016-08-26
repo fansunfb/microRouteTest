@@ -44,9 +44,7 @@ class MicroRouteDetection {
   void initialClustering();
 
   // load the best micro-route beamforming information from FW
-  void bestMicroRouteFromFW(
-      bool microRouteFromFWFlag,
-      RouteIndex routeIndexFromFW);
+  void bestMicroRouteFromFW(RouteIndex routeIndexFromFW);
 
   // micro-route identification
   std::multimap<uint8_t, RouteIndex>& microRouteDiscovery();
