@@ -4,43 +4,47 @@ namespace facebook {
 namespace terragraph {
 
 MicroRouteDetection::MicroRouteDetection(
-  uint8_t sampling,
-  uint8_t initClusterMaxNum,
-  uint8_t beamIdxMaxNum,
-  const std::multimap<uint8_t, RouteIndex>& bfSnrFwReport,
-  const std::map<RouteIndex, uint8_t>& bfTxRxSnrFwReport,
-  const std::map<RouteIndex, uint8_t>& bfTxRxClusterInitialIdxReport)
-      : bfSampling (sampling),
-        clusterMaxNum (initClusterMaxNum),
-        bfSnrReport (bfSnrFwReport),
-        bfSnrReportMicroRoute (bfSnrFwReport),
-        bfTxRxSnrReport (bfTxRxSnrFwReport),
-        bfTxRxClusterIdxReport (bfTxRxClusterInitialIdxReport) {
+    uint8_t bfSampling,
+    uint8_t clusterMaxNum,
+    uint8_t beamIdxMaxNum,
+    const std::multimap<uint8_t, RouteIndex>& bfSnrFwReport,
+    const std::map<RouteIndex, uint8_t>& bfTxRxSnrFwReport,
+    const std::map<RouteIndex, uint8_t>& bfTxRxClusterIdxReport)
+    : gridSize_(9),
+      bfSampling_(bfSampling),
+      clusterMaxNum_(clusterMaxNum),
+      beamIdxMaxNum_(beamIdxMaxNum),
+      bestRouteFromFWFlag_(false),
+      bestRouteIndexFromFW_(-1,-1),
+      bfSnrReport_(bfSnrFwReport),
+      bfSnrReportMicroRoute_(bfSnrFwReport),
+      bfTxRxSnrReport_(bfTxRxSnrFwReport),
+      bfTxRxClusterIdxReport_(bfTxRxClusterIdxReport) {
   // build 3x3 grid to compare the <tx, rx> pairs with same Snr values
-  RouteIndex RouteIndexTemp1(-sampling, -sampling);
-  RouteIndex RouteIndexTemp2(-sampling, 0);
-  RouteIndex RouteIndexTemp3(-sampling, sampling);
-  RouteIndex RouteIndexTemp4(0, -sampling);
-  RouteIndex RouteIndexTemp5(0, sampling);
-  RouteIndex RouteIndexTemp6(sampling, -sampling);
-  RouteIndex RouteIndexTemp7(sampling, 0);
-  RouteIndex RouteIndexTemp8(sampling, sampling);
-  gridDeltaValues.push_back(RouteIndexTemp1);
-  gridDeltaValues.push_back(RouteIndexTemp2);
-  gridDeltaValues.push_back(RouteIndexTemp3);
-  gridDeltaValues.push_back(RouteIndexTemp4);
-  gridDeltaValues.push_back(RouteIndexTemp5);
-  gridDeltaValues.push_back(RouteIndexTemp6);
-  gridDeltaValues.push_back(RouteIndexTemp7);
-  gridDeltaValues.push_back(RouteIndexTemp8);
-  gridSize = 9;
-  beamIdxMax = beamIdxMaxNum;
+  RouteIndex RouteIndexTemp1(-bfSampling_, -bfSampling_);
+  RouteIndex RouteIndexTemp2(-bfSampling_, 0);
+  RouteIndex RouteIndexTemp3(-bfSampling_, bfSampling_);
+  RouteIndex RouteIndexTemp4(0, -bfSampling_);
+  RouteIndex RouteIndexTemp5(0, bfSampling_);
+  RouteIndex RouteIndexTemp6(bfSampling_, -bfSampling_);
+  RouteIndex RouteIndexTemp7(bfSampling_, 0);
+  RouteIndex RouteIndexTemp8(bfSampling_, bfSampling_);
 
-  for (uint8_t tempIdx = 0; tempIdx <= beamIdxMax; tempIdx++) {
+  // any better way to initialize the following std::list?
+  gridDeltaValues_.push_back(RouteIndexTemp1);
+  gridDeltaValues_.push_back(RouteIndexTemp2);
+  gridDeltaValues_.push_back(RouteIndexTemp3);
+  gridDeltaValues_.push_back(RouteIndexTemp4);
+  gridDeltaValues_.push_back(RouteIndexTemp5);
+  gridDeltaValues_.push_back(RouteIndexTemp6);
+  gridDeltaValues_.push_back(RouteIndexTemp7);
+  gridDeltaValues_.push_back(RouteIndexTemp8);
+
+  for (uint8_t tempIdx = 0; tempIdx <= beamIdxMaxNum_; tempIdx++) {
     if (tempIdx <= 31)
-      beamIndexMapping[tempIdx] = (31 - tempIdx);
+      beamIndexMapping_[tempIdx] = (31 - tempIdx);
     else
-      beamIndexMapping[tempIdx] = tempIdx;
+      beamIndexMapping_[tempIdx] = tempIdx;
   }
   halfBeamWidthInitialCalculation();
 }
@@ -50,56 +54,64 @@ MicroRouteDetection::initialClustering() {
   uint8_t clusterIdx = 1;
 
   // When obtain a micro-route candidate, clusterIdx increases, the peak/center
-  // of the cluster will be removed from bfSnrReport and bfTxRxSnrReport
-  while ((bfSnrReport.size() != 0) && (clusterIdx <= clusterMaxNum)) {
+  // of the cluster will be removed from bfSnrReport_ and bfTxRxSnrReport_
+  while ((bfSnrReport_.size() != 0) && (clusterIdx <= clusterMaxNum_)) {
     uint8_t maxSnr = 0;
-    RouteIndex RouteIndexSelectedPeak(-1, -1);
+    RouteIndex routeIndexSelectedPeak(-1, -1);
     std::multimap<uint8_t, RouteIndex> tempBfSnrReport;
     clusterReport txRxSnrCluster;
 
     // if the potential peak for an additional cluster lie in previous clusters,
     // remove it
-    if (bfTxRxClusters.size() != 0) {
+    if (bfTxRxClusters_.size() != 0) {
       eliminateEntryFromClusterReport();
     }
-    if (bfSnrReport.empty())
+    if (bfSnrReport_.empty())
       break;
 
     if (equalPeakValue(maxSnr)) {
-      uint8_t peakNum = bfSnrReport.count(maxSnr);
+      uint8_t peakNum = bfSnrReport_.count(maxSnr);
 
-      // check the 3x3 grid via search over bfTxRxSnrReport map
-      RouteIndexSelectedPeak = compareEqualPeak(maxSnr);
+      // check the 3x3 grid via search over bfTxRxSnrReport_ map
+      routeIndexSelectedPeak = compareEqualPeak(maxSnr);
 
       std::pair<multimap_iterator, multimap_iterator> iterPair =
-          bfSnrReport.equal_range(maxSnr);
+          bfSnrReport_.equal_range(maxSnr);
 
       for (multimap_iterator it = iterPair.first; it != iterPair.second; ++it) {
-        if (it->second == RouteIndexSelectedPeak) {
-          if (bfTxRxClusterIdxReport.at(RouteIndexSelectedPeak) == 0) {
+        if (it->second == routeIndexSelectedPeak) {
+          if (bfTxRxClusterIdxReport_.at(routeIndexSelectedPeak) == 0) {
             tempBfSnrReport.insert(*it);
-            bfTxRxClusterIdxReport.at(RouteIndexSelectedPeak) = clusterIdx;
+            bfTxRxClusterIdxReport_.at(routeIndexSelectedPeak) = clusterIdx;
           }
-          bfTxRxSnrReport.erase(it->second);
-          bfSnrReport.erase(it);
+          bfTxRxSnrReport_.erase(it->second);
+          bfSnrReport_.erase(it);
           break;
         }
       }
     } else {
-      multimap_rev_iterator rit = bfSnrReport.rbegin();
-      RouteIndexSelectedPeak = rit->second;
+      multimap_rev_iterator rit = bfSnrReport_.rbegin();
+      routeIndexSelectedPeak = rit->second;
       tempBfSnrReport.insert(*(rit));
-      bfTxRxClusterIdxReport.at(RouteIndexSelectedPeak) = clusterIdx;
-      bfTxRxSnrReport.erase(rit->second);
-      bfSnrReport.erase(--(rit.base()));
+      bfTxRxClusterIdxReport_.at(routeIndexSelectedPeak) = clusterIdx;
+      bfTxRxSnrReport_.erase(rit->second);
+      bfSnrReport_.erase(--(rit.base()));
     }
-    clusterConstruction(tempBfSnrReport, RouteIndexSelectedPeak, clusterIdx);
+    clusterConstruction(tempBfSnrReport, routeIndexSelectedPeak, clusterIdx);
     txRxSnrCluster.txRxClusterMap = tempBfSnrReport;
-    txRxSnrCluster.bfPeakTx = RouteIndexSelectedPeak.tx_idx;
-    txRxSnrCluster.bfPeakRx = RouteIndexSelectedPeak.rx_idx;
-    bfTxRxClusters.push_back(txRxSnrCluster);
+    txRxSnrCluster.bfPeakTx = routeIndexSelectedPeak.tx_idx;
+    txRxSnrCluster.bfPeakRx = routeIndexSelectedPeak.rx_idx;
+    bfTxRxClusters_.push_back(txRxSnrCluster);
     clusterIdx++;
   }
+}
+
+void
+MicroRouteDetection::bestMicroRouteFromFW(
+    bool microRouteFromFWFlag,
+    RouteIndex routeIndexFromFW) {
+  bestRouteFromFWFlag_ = microRouteFromFWFlag;
+  bestRouteIndexFromFW_ = routeIndexFromFW;
 }
 
 std::multimap<uint8_t, RouteIndex>&
@@ -110,7 +122,12 @@ MicroRouteDetection::microRouteDiscovery() {
   for (multimap_rev_iterator rit = bfSnrReportMicroRoute.rbegin();
       rit != bfSnrReportMicroRoute.rend(); ) {
     uint8_t snrTemp = rit->first;
-    RouteIndex routeIndexTemp = rit->second;
+    RouteIndex routeIndexTemp(-1,-1);
+    if (!bestRouteFromFWFlag)
+      routeIndexTemp = rit->second;
+    else
+      routeIndexTemp = bestRouteIndexFromFW;
+
     if (microRoute.empty()) {
       microRoute.insert(
           std::make_pair<uint8_t, RouteIndex>(snrTemp, routeIndexTemp));
@@ -169,9 +186,9 @@ MicroRouteDetection::validNewMicroRoute(
 bool
 MicroRouteDetection::equalPeakValue(uint8_t maxSnr) {
   multimap_rev_iterator rit;
-  rit = bfSnrReport.rbegin();
+  rit = bfSnrReport_.rbegin();
   maxSnr = rit->first;
-  if (bfSnrReport.count(maxSnr) > 1) {
+  if (bfSnrReport_.count(maxSnr) > 1) {
     return true;
   } else
     return false;
@@ -180,9 +197,9 @@ MicroRouteDetection::equalPeakValue(uint8_t maxSnr) {
 RouteIndex
 MicroRouteDetection::compareEqualPeak(uint8_t maxSnr) {
   std::pair<multimap_iterator, multimap_iterator> iterPair =
-      bfSnrReport.equal_range(maxSnr);
-  RouteIndex RouteIndexTemp(-1, -1);
-  RouteIndex RouteIndexSelectedPeak(-1, -1);
+      bfSnrReport_.equal_range(maxSnr);
+  RouteIndex routeIndexTemp(-1, -1);
+  RouteIndex routeIndexSelectedPeak(-1, -1);
   uint16_t snrSum;
   uint8_t validNeighborNum;
   uint8_t averageSnr = 0;
@@ -191,24 +208,24 @@ MicroRouteDetection::compareEqualPeak(uint8_t maxSnr) {
 
   for (multimap_iterator it = iterPair.first; it != iterPair.second;) {
     if (bfTxRxClusterIdxReport.at(it->second) > 0) {
-      bfTxRxSnrReport.erase(it->second);
-      bfSnrReport.erase(it++);
+      bfTxRxSnrReport_.erase(it->second);
+      bfSnrReport_.erase(it++);
     } else
       ++it;
   }
-  iterPair = bfSnrReport.equal_range(maxSnr);
-  RouteIndexSelectedPeak = iterPair.first->second;
+  iterPair = bfSnrReport_.equal_range(maxSnr);
+  routeIndexSelectedPeak = iterPair.first->second;
   for (multimap_iterator it = iterPair.first; it != iterPair.second; ++it) {
-    if (bfTxRxSnrReport.find(it->second) != bfTxRxSnrReport.end()) {
+    if (bfTxRxSnrReport_.find(it->second) != bfTxRxSnrReport_.end()) {
       snrSum = 0;
       validNeighborNum = 0;
-      // check the nearby 3x3 grid based on bfSampling
-      for (std::list<RouteIndex>::iterator iter = gridDeltaValues.begin();
-          iter != gridDeltaValues.end(); ++iter) {
-        RouteIndexTemp = it->second;
-        if (bfIndexSum(RouteIndexTemp, *iter)) {
-          map_iterator mit = bfTxRxSnrReport.find(RouteIndexTemp);
-          if (mit != bfTxRxSnrReport.end()) {
+      // check the nearby 3x3 grid based on bfSampling_
+      for (std::list<RouteIndex>::iterator iter = gridDeltaValues_.begin();
+          iter != gridDeltaValues_.end(); ++iter) {
+        routeIndexTemp = it->second;
+        if (bfIndexSum(routeIndexTemp, *iter)) {
+          map_iterator mit = bfTxRxSnrReport_.find(routeIndexTemp);
+          if (mit != bfTxRxSnrReport_.end()) {
             validNeighborNum++;
             snrSum += mit->second;
           }
@@ -220,11 +237,11 @@ MicroRouteDetection::compareEqualPeak(uint8_t maxSnr) {
     }
     // update RouteIndexSelectedPeak
     if (averageSnr > averageSnrSelectedPeak) {
-      RouteIndexSelectedPeak = it->second;
+      routeIndexSelectedPeak = it->second;
       averageSnrSelectedPeak = averageSnr;
     }
   }
-  return RouteIndexSelectedPeak;
+  return routeIndexSelectedPeak;
 }
 
 bool
@@ -233,7 +250,7 @@ MicroRouteDetection::bfIndexSum(
   // this might be negative as delta can be delta can be negative
   int8_t tx_idx_temp = routeIndex.tx_idx + delta.tx_idx;
   int8_t rx_idx_temp = routeIndex.rx_idx + delta.rx_idx;
-  if ((tx_idx_temp > beamIdxMax) || (rx_idx_temp > beamIdxMax)
+  if ((tx_idx_temp > beamIdxMaxNum_) || (rx_idx_temp > beamIdxMaxNum_)
       || (tx_idx_temp < 0) || (rx_idx_temp < 0))
     return false;
   else {
@@ -248,7 +265,7 @@ MicroRouteDetection::clusterConstruction(
     std::multimap<uint8_t, RouteIndex>& tempBfSnrReport,
     const RouteIndex& RouteIndexPeak, const uint8_t clusterIdx) {
   uint8_t temp = 0;
-  for (multimap_iterator it = bfSnrReport.begin(); it != bfSnrReport.end();
+  for (multimap_iterator it = bfSnrReport_.begin(); it != bfSnrReport_.end();
       ++it) {
     uint8_t txHalfBeamwidth = halfBeamWidth[RouteIndexPeak.tx_idx];
     uint8_t rxHalfBeamwidth = halfBeamWidth[RouteIndexPeak.rx_idx];
@@ -264,22 +281,22 @@ MicroRouteDetection::clusterConstruction(
     if ((txSeperation <= txHalfBeamwidth) &&
         (rxSeperation <= rxHalfBeamwidth)) {
       tempBfSnrReport.insert(*it);
-      bfTxRxClusterIdxReport.at(it->second) = clusterIdx;
+      bfTxRxClusterIdxReport_.at(it->second) = clusterIdx;
     }
   }
 }
 
 void
 MicroRouteDetection::eliminateEntryFromClusterReport() {
-  for (multimap_rev_iterator rit = bfSnrReport.rbegin();
-       rit != bfSnrReport.rend();) {
+  for (multimap_rev_iterator rit = bfSnrReport_.rbegin();
+       rit != bfSnrReport_.rend();) {
     RouteIndex routeIndex = rit->second;
 
     // if the routeIndex exists in clusters, remove it from
-    // bfTxRxSnrReport/bfSnrReport
-    if (bfTxRxClusterIdxReport.at(routeIndex) > 0) {
-      bfTxRxSnrReport.erase(routeIndex);
-      bfSnrReport.erase(--(rit.base()));
+    // bfTxRxSnrReport_/bfSnrReport_
+    if (bfTxRxClusterIdxReport_.at(routeIndex) > 0) {
+      bfTxRxSnrReport_.erase(routeIndex);
+      bfSnrReport_.erase(--(rit.base()));
     } else {
       break;
     }
@@ -288,18 +305,18 @@ MicroRouteDetection::eliminateEntryFromClusterReport() {
 
 void
 MicroRouteDetection::halfBeamWidthInitialCalculation() {
-  double cbResolution = 90 / (beamIdxMax+1);
+  double cbResolution = 90 / (beamIdxMaxNum_+1);
   uint16_t broadSideBeamWidth = 8;
   double pi = 3.1415;
   uint8_t bfIndex;
-  for (bfIndex=0; bfIndex <= beamIdxMax; ++bfIndex)
+  for (bfIndex=0; bfIndex <= beamIdxMaxNum_; ++bfIndex)
   {
     if (bfIndex > 31)
-      halfBeamWidth[bfIndex] = round(0.5 * (1 / cbResolution)
+      halfBeamWidth_[bfIndex] = round(0.5 * (1 / cbResolution)
           * broadSideBeamWidth
           / (cos((pi / 180) * abs(bfIndex - 32) * cbResolution)));
     else
-      halfBeamWidth[bfIndex] = round(0.5 * (1 / cbResolution)
+      halfBeamWidth_[bfIndex] = round(0.5 * (1 / cbResolution)
           * broadSideBeamWidth
           / (cos((pi / 180) * bfIndex * cbResolution)));
   }
